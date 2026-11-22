@@ -57,6 +57,8 @@ The Databricks Apps gateway enforces Databricks OAuth for both the page and the 
 
 The app's service principal is granted SELECT only on the narrow `vf.app` views and the `vf.gold` tables it needs — never on internal silver/search tables beyond the exposed views.
 
+A **complete export** of every table above (Parquet, row-count-verified, dated 2026-11-22) is included in [`data/`](data/README.md) so the dataset can be inspected and analyzed without workspace access. The live app still reads Unity Catalog at runtime.
+
 ## Project layout
 
 ```
@@ -76,6 +78,7 @@ virtue-facility-finder/
     leaflet.js/.css # Leaflet 1.9.4 (BSD-2-Clause), vendored
     images/         # Leaflet marker/layer icons
     selftest.html/js # served browser self-test page
+  data/            # complete Parquet export of every table the app reads (see data/README.md)
 ```
 
 ## Running and deploying
