@@ -7,6 +7,34 @@ The app never claims "best hospital", confirmed availability, or clinical suitab
 Live deployment (Databricks App — requires Databricks sign-in with access to this workspace):
 https://virtue-facility-finder-7474659425200889.aws.databricksapps.com
 
+## Screenshots
+
+Captured from the running application (search: `CRRT` + city filter `Jaipur` — 13 matching source records, live Unity Catalog data).
+
+**Home** — care search with quick-search chips, optional city/PIN filters, and the honest-caveat banners shown throughout:
+
+![Home](docs/screenshots/home.png)
+
+**Evidence-first search results** — every card shows the matched quotation, its source field, the evidence category, and the shortlist explanation:
+
+![Evidence-first search results](docs/screenshots/search-results.png)
+
+**Evidence drawer** — exact source quotations with provenance, AI-interpretation status, unverified-contact caveats, "what still needs checking", and how this result was ordered:
+
+![Evidence drawer](docs/screenshots/evidence-drawer.png)
+
+**Side-by-side comparison** — up to 3 facilities, with explicit "not recorded" placeholders:
+
+![Side-by-side comparison](docs/screenshots/comparison.png)
+
+**Interactive map** — Leaflet 1.9.4 with OpenStreetMap tiles; markers are recorded (never independently verified) coordinates for the page's records:
+
+![Interactive map](docs/screenshots/map.png)
+
+**Mobile layout:**
+
+![Mobile results](docs/screenshots/mobile-results.png)
+
 ## User-facing features
 
 - **Search:** six quick-search service buttons (dialysis, MRI, NICU, cardiac surgery, C-section, burn care) plus free-text care phrases (e.g. `cataract surgery`), with optional city and PIN-code text filters. One result per source record, with aggregated evidence.
