@@ -1,0 +1,18 @@
+# Virtue Foundation Facility Finder — Databricks App configuration.
+command:
+- python
+- -m
+- uvicorn
+- app:app
+- --host
+- 0.0.0.0
+- --port
+- '8000'
+env:
+- name: DATABRICKS_WAREHOUSE_ID
+  value: dd4ed05a32ad7435
+resources:
+- name: sql-warehouse
+  sql_warehouse:
+    id: dd4ed05a32ad7435
+    permission: CAN_USE

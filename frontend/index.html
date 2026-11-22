@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Find care options — Virtue Foundation</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/leaflet.css">
+  <script src="/leaflet.js"></script>
+  <script src="/app.js" type="module" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#results">Skip to results</a>
+
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">VF</div>
+      <div class="brand-text">
+        <span class="brand-name">Virtue Foundation</span>
+        <span class="brand-sub">Find care options</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="how-open" class="btn btn-ghost" type="button" aria-haspopup="dialog">How this search works</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Find care options</h1>
+      <p class="hero-sub">Explore facilities and the evidence behind their services.</p>
+      <p class="hero-notice" role="note">Service information may be incomplete. Confirm the service and availability directly with the facility.</p>
+    </section>
+
+    <form id="search-form" role="search" aria-label="Facility search">
+      <fieldset class="service-set">
+        <legend>What care do you need?</legend>
+        <div class="care-field">
+          <label for="care-input" class="visually-hidden">Care or service phrase</label>
+          <input id="care-input" name="q" type="text" maxlength="120" autocomplete="off" placeholder="e.g., cataract surgery, chemotherapy, physiotherapy, dental implants">
+        </div>
+        <p class="care-hint">Short service phrases work best — or pick one of the reviewed quick searches:</p>
+        <div id="service-chips" class="chips" role="group" aria-label="Quick-search suggestions"></div>
+      </fieldset>
+      <div class="loc-controls">
+        <div class="loc-field">
+          <label for="city-input">City <span class="hint">(optional)</span></label>
+          <input id="city-input" name="city" type="text" autocomplete="off" placeholder="e.g., Jaipur">
+        </div>
+        <div class="loc-field">
+          <label for="pin-input">PIN code <span class="hint">(optional)</span></label>
+          <input id="pin-input" name="pin" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g., 302012">
+        </div>
+        <div class="loc-field">
+          <label for="radius-input">Within <span class="hint">(device location)</span></label>
+          <select id="radius-input" aria-label="Search radius around device location">
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+            <option value="25" selected>25 km</option>
+            <option value="50">50 km</option>
+          </select>
+        </div>
+        <div class="loc-actions">
+          <button id="loc-btn" class="btn btn-ghost" type="button">Use my location</button>
+          <button id="loc-clear" class="btn btn-ghost" type="button" hidden>Clear location</button>
+          <button id="search-btn" class="btn btn-primary" type="submit">Search</button>
+          <button id="reset-btn" class="btn btn-ghost" type="reset">Clear</button>
+        </div>
+      </div>
+      <p class="loc-note">“Use my location” asks your browser for your device position for this one search only. It is sent with the search request, never saved, never logged, and never combined with city or PIN filters. Denying it is fine — city and PIN search work without it.</p>
+      <p id="loc-status" class="loc-status" role="status" aria-live="polite" hidden></p>
+
+      <div class="sort-controls">
+        <label for="sort-input">Order results by</label>
+        <select id="sort-input">
+          <option value="evidence" selected>Evidence relevance</option>
+          <option value="name">Name (A–Z)</option>
+          <option value="distance" disabled>Distance (needs device location)</option>
+        </select>
+      </div>
+    </form>
+
+    <details id="how-ordered" class="how-ordered">
+      <summary>How results are ordered</summary>
+      <div id="ordering-rules" class="ordering-rules">
+        <p class="muted">Run a search to see the exact ordering used for those results. This order is a provisional shortlist policy — never a clinically validated ranking or a “best hospital” claim.</p>
+      </div>
+    </details>
+
+    <section id="results" aria-labelledby="results-heading">
+      <h2 id="results-heading" class="visually-hidden">Results</h2>
+      <div id="results-live" aria-live="polite">
+        <p id="results-reminder" class="results-reminder" role="note" hidden>Service information may be incomplete. Confirm the service and availability directly with the facility.</p>
+        <div class="results-head">
+          <p id="searching-for" class="searching-for" hidden></p>
+          <p id="results-count" class="results-count" hidden></p>
+          <p id="first-explanation" class="first-explanation" hidden></p>
+        </div>
+        <div id="view-toggle" class="view-toggle" role="group" aria-label="Results view" hidden>
+          <button id="view-list" class="btn btn-ghost btn-small active" type="button" aria-pressed="true">List</button>
+          <button id="view-map" class="btn btn-ghost btn-small" type="button" aria-pressed="false">Map</button>
+        </div>
+        <div id="map-panel" class="map-panel" hidden>
+          <h3 class="map-title">Recorded facility locations</h3>
+          <div id="map-canvas" class="map-canvas" role="region" aria-label="Interactive map of recorded facility locations"></div>
+          <p id="map-note" class="map-caption" role="note" hidden></p>
+          <p class="map-caption">Interactive basemap: OpenStreetMap — open data under the ODbL licence; tiles from tile.openstreetmap.org; no API key. Map library: Leaflet (BSD-2-Clause, self-hosted). Markers use recorded facility coordinates, which are never independently verified, and show the current page’s records only; blue dashed circle is your chosen search radius (device location never stored or logged). Distances are straight-line, not travel time. The map is not used for directions.</p>
+        </div>
+
+        <div id="state-loading" class="state-block" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Searching records…</p>
+        </div>
+
+        <div id="state-auth" class="state-block state-auth" hidden>
+          <h3>Sign-in required</h3>
+          <p>This app uses your Databricks account for access. Open this page in a browser where you are signed in to Databricks, then retry.</p>
+          <button id="auth-retry" class="btn btn-primary" type="button">Retry</button>
+        </div>
+
+        <div id="state-error" class="state-block state-error" hidden>
+          <h3>Facility service unavailable</h3>
+          <p id="error-detail">The search could not be completed.</p>
+          <button id="error-retry" class="btn btn-primary" type="button">Retry</button>
+        </div>
+
+        <div id="state-empty" class="state-block state-empty" hidden>
+          <h3>No matching evidence found in this dataset</h3>
+          <p>No dataset text matched this phrase with these filters. That does <strong>not</strong> mean no facilities offer this care — the dataset may simply not cover it, or may record it in different words. Try a shorter or differently spelled service phrase.</p>
+        </div>
+      </div>
+
+      <ol id="results-list" class="results-list"></ol>
+      <nav id="pagination" class="pagination" aria-label="Results pages" hidden></nav>
+    </section>
+  </main>
+
+  <div id="compare-tray" class="compare-tray" hidden>
+    <span id="compare-tray-label" class="compare-tray-label">Compare (up to 3)</span>
+    <div id="compare-tray-items" class="compare-tray-items"></div>
+    <button id="compare-clear" class="btn btn-ghost btn-small" type="button">Clear</button>
+    <button id="compare-open" class="btn btn-primary btn-small" type="button">Compare side by side</button>
+  </div>
+
+  <div id="drawer" class="dialog" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <div class="dialog-card">
+      <header class="dialog-head">
+        <h3 id="drawer-title">Facility details</h3>
+        <button class="dialog-close" type="button" data-close="drawer" aria-label="Close details">✕</button>
+      </header>
+      <div id="drawer-body" class="dialog-body"></div>
+    </div>
+  </div>
+
+  <div id="compare-modal" class="dialog" role="dialog" aria-modal="true" aria-labelledby="compare-title" hidden>
+    <div class="dialog-card dialog-wide">
+      <header class="dialog-head">
+        <h3 id="compare-title">Compare records</h3>
+        <button class="dialog-close" type="button" data-close="compare-modal" aria-label="Close comparison">✕</button>
+      </header>
+      <div id="compare-body" class="dialog-body"></div>
+    </div>
+  </div>
+
+  <div id="how-modal" class="dialog" role="dialog" aria-modal="true" aria-labelledby="how-title" hidden>
+    <div class="dialog-card dialog-wide">
+      <header class="dialog-head">
+        <h3 id="how-title">How this search works</h3>
+        <button class="dialog-close" type="button" data-close="how-modal" aria-label="Close">✕</button>
+      </header>
+      <div id="how-body" class="dialog-body"></div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <p>Sources: Virtue Foundation national facility dataset (10,088 source rows → 10,077 representative records; free-text search over 579,335 normalized text elements covering 9,997 records) and the Jaipur dialysis pilot. Service mentions are evidence from dataset text — not verified availability. “AI validated” means structure and quotations passed checks, not that treatment delivery was verified.</p>
+    <p class="muted"><a href="/selftest.html">Frontend self-tests</a> (simulated browser checks — opens a separate page).</p>
+  </footer>
+</body>
+</html>

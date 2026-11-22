@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Frontend self-tests — Virtue Foundation</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">VF</div>
+      <div class="brand-text">
+        <span class="brand-name">Virtue Foundation</span>
+        <span class="brand-sub">Frontend self-tests (simulated browser checks)</span>
+      </div>
+    </div>
+  </header>
+  <main>
+    <p class="muted">These checks run the served app in an iframe on this page and confirm basic wiring: quick-search chips, a live search request, result cards with evidence, the comparison flow, the interactive facility map (including a live basemap-tile load check), and the evidence drawer. They use only the public app UI — no internals, no secrets. Run them while signed in to Databricks.</p>
+    <ol id="selftest-results" class="results-list" style="max-width:640px"></ol>
+    <p class="muted"><a href="/">Back to the app</a></p>
+  </main>
+  <iframe id="app-frame" src="/" title="App under test" style="width:100%;height:560px;border:1px solid #94b8cc;border-radius:8px;margin-top:12px"></iframe>
+  <script src="/selftest.js" defer></script>
+</body>
+</html>
