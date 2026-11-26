@@ -728,7 +728,15 @@ function openDrawer(r) {
     if (p.retrieved_temporal_context) srcs.append(h("p", { class: "muted" }, `Statement context: ${temporalLabel(p.retrieved_temporal_context)} — not current-availability evidence.`));
   }
   if (p && (p.unattributed_source_url_candidates || []).length) {
-    srcs.append(h("p", { class: "muted" }, "Unattributed candidate links (not quoted, not verified): ", p.unattributed_source_url_candidates.join(" · ")));
+    // Candidate URLs rendered as safe HTTP(S)-only links — same pattern as
+    // source links. The label keeps stating they are unattributed, not
+    // quoted, and not verified; linking never implies attribution.
+    const candLine = h("p", { class: "muted" }, "Unattributed candidate links (not quoted, not verified): ");
+    p.unattributed_source_url_candidates.forEach((u, i) => {
+      if (i) candLine.append(" · ");
+      candLine.append(sourceLink(u));
+    });
+    srcs.append(candLine);
   }
   body.append(srcs);
 
@@ -857,8 +865,19 @@ function openCompare() {
         ` — retrieved ${p.retrieved_evidence_retrieved_at || "unknown date"}; ${temporalLabel(p.retrieved_temporal_context)} (retrieval is not verification)`);
     }],
     ["Needs checking", (r) => {
+      // Mirrors the drawer's "What still needs checking" list — including the
+      // recorded unresolved issues (e.g. Monilek's capacity difference), so
+      // the comparison never drops an issue the drawer shows.
       const items = ((r.ordering && r.ordering.unresolved_reasons) || []).slice();
-      if (r.ai_interpretation && r.ai_interpretation.patient_scope === "pediatric") items.push("Pediatric record — adult eligibility not established");
+      const ai = r.ai_interpretation;
+      const p = r.jaipur_pilot_supplement;
+      if (ai) {
+        if (ai.patient_scope === "pediatric") items.push("Pediatric record — adult eligibility not established");
+        if (ai.patient_scope === "unspecified") items.push("Patient scope is unspecified — not adult eligibility");
+        if (ai.is_crrt) items.push("CRRT is listed — CRRT is not interchangeable with routine dialysis");
+        if (ai.possible_mixed_facility_record) items.push("Possible mixed-facility/branch record — evidence may refer to a different facility or branch");
+      }
+      if (p && p.retrieved_unresolved_issues) items.push(retrievedIssueText(p.retrieved_unresolved_issues));
       items.push("Current availability: contact facility to confirm");
       return items;
     }],
@@ -867,8 +886,11 @@ function openCompare() {
       if (!c) return "None in source data";
       const parts = [];
       if ((c.phones || []).length) parts.push(c.phones.join(", "));
-      if ((c.websites || []).length) parts.push(c.websites.join(", "));
-      return parts.length ? parts.join(" · ") : "None valid in source data";
+      // Contact websites are rendered as safe HTTP(S)-only links (same pattern
+      // as source links) — copied from source data, unverified; linking never
+      // implies attribution.
+      for (const u of c.websites || []) parts.push(sourceLink(u));
+      return parts.length ? parts : "None valid in source data";
     }],
     ["Current availability", () => "Contact facility to confirm — unknown for every record"],
   ];

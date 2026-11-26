@@ -127,7 +127,7 @@ THIRD-PARTY-NOTICES.md
 app.py, server/, frontend/   # the app source (this folder, verbatim)
 ```
 
-Honest gaps, stated here rather than papered over: notebooks `00_profile_sources` and `02_clean_facilities_silver` exported as empty placeholders (the substantive step-1 cleaning lives in `01_facilities_cleaning_step1`); there are two `04_` and two `11_` notebooks (parallel steps) and no `01_`-numbered notebook. Raw source data (original spreadsheets, volunteered facility lists) is intentionally **not** included — `data/` carries only the derived app-facing tables. The AI-enrichment and pilot-retrieval notebooks document their prompts and validation rules; re-running them requires a model provider and retrieved pages not shipped in this package, so their **validated outputs** are exported instead.
+Honest gaps, stated here rather than papered over: notebook `00_profile_sources` exported as an empty placeholder — the author's local notebook is **non-empty** per direct inspection, and its output-free source will be supplied separately to fill this placeholder (the workflow is not claimed complete until then); `02_clean_facilities_silver` also exported as an empty placeholder (the substantive step-1 cleaning lives in `01_facilities_cleaning_step1`). There are two `04_` and two `11_` notebooks (parallel steps) and no `01_`-numbered notebook. Raw source data (original spreadsheets, volunteered facility lists) is intentionally **not** included — `data/` carries only the derived app-facing tables. The AI-enrichment and pilot-retrieval notebooks document their prompts and validation rules; re-running them requires a model provider and retrieved pages not shipped in this package, so their **validated outputs** are exported instead.
 
 ## Modality-precision fix and verified count reconciliation (2026-11-26, deployment `01f1e9c29bf913a6a0981a5f2a75d3c0`)
 
@@ -143,6 +143,13 @@ Before this fix, the dialysis family was a single symmetric alias group mixing t
 | pediatric dialysis | 13 | 12 | one record previously reachable only via the composite "paediatric haemodialysis"; it remains findable by its own modality query |
 | physio therapy | 1,205 | 1,205 | removed composites ("physiotherapy therapy") matched nothing |
 | cesarean | 443 | 445 | +2: the old 24-variant cap had crowded out legitimate plurals ("c sections") that the clean expansion fits |
+
+## Comparison-parity and safe-link fixes (2026-11-26, deployment `01f1e9c396ab1ce5ae1f890fcda0f3d7`)
+
+Both gaps were first observed in live-browser verification (Firefox, by the author) on the restored deployment; both were then fixed and verified with bounded DOM-stub checks (11/11):
+
+1. **Comparison preserves every "needs checking" item the drawer shows** — the comparison's "Needs checking" row previously listed only current availability; it now mirrors the drawer exactly, including the recorded unresolved issues (e.g. Monilek's "Unresolved capacity difference —" with the issue text passed through verbatim), the CRRT-distinction note, unspecified-scope and mixed-facility flags, and pediatric-scope items.
+2. **Consistent safe HTTP(S) links** — unattributed candidate URLs in the evidence drawer and contact websites in the comparison table now render as clickable links using the same safe pattern as source links (`target="_blank"`, `rel="noopener noreferrer nofollow"`, HTTP(S) only; `javascript:`/`data:` schemes are never linked). Labels still state the URLs are unattributed/unverified — linking never implies attribution, and a non-HTTP(S) candidate is preserved as plain text, not linked.
 
 ## Known limitations
 

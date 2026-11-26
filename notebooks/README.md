@@ -10,8 +10,10 @@ Pipeline order (two parallel `04_` and two parallel `11_` steps are intentional;
 no `01_`-numbered notebook exists — manual step-1 cleaning is
 `01_facilities_cleaning_step1`):
 
-- `00_profile_sources` — source profiling (**empty placeholder — nothing was
-  ever saved in this notebook**)
+- `00_profile_sources` — source profiling (**exported empty; the author's
+  local notebook is non-empty — its output-free source will be supplied
+  later to fill this placeholder, so the workflow is not yet claimed
+  complete**)
 - `01_facilities_cleaning_step1` — name/pincode/count cleaning with
   volunteer manual-review workbook
 - `02_clean_facilities_silver` — silver cleaning (**empty placeholder**; the
