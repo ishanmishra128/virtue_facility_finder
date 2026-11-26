@@ -146,6 +146,45 @@ def _evidence_items(ev: Any) -> List[Dict[str, Any]]:
     return out
 
 
+def _quote_items(q: Any) -> List[Dict[str, Any]]:
+    """Normalize AI evidence quotations to {source_field, exact_quote} objects.
+
+    The gold view stores these as plain verbatim strings (older versions used
+    objects with varying text keys). Only existing text is repackaged — nothing
+    is invented, completed, or paraphrased; items with no usable text are
+    dropped rather than rendered as a placeholder.
+    """
+    out: List[Dict[str, Any]] = []
+    for item in (_complex(q) or []):
+        if isinstance(item, dict):
+            text = (item.get("exact_quote") or item.get("quote")
+                    or item.get("evidence_text") or item.get("text"))
+            if text:
+                out.append({"source_field": item.get("source_field"), "exact_quote": str(text)})
+        elif item not in (None, ""):
+            out.append({"source_field": None, "exact_quote": str(item)})
+    return out
+
+
+def _temporal_note(tc: Optional[str]) -> str:
+    """Plain-language note for a retrieved website statement, rendered from
+    its ACTUAL recorded temporal context — never assumed to be historical.
+    Only a dated historical statement is described as historical."""
+    if tc == "dated_historical_statement":
+        return ("Dated historical statement from retrieved website evidence — it refers "
+                "to the past; current availability remains unknown and this is not a "
+                "current-availability claim.")
+    if tc == "undated_statement":
+        return ("Undated statement from retrieved website evidence — no date is recorded, "
+                "so current status is not established; this is not a current-availability "
+                "claim.")
+    if tc:
+        return (f"Statement from retrieved website evidence — recorded temporal context "
+                f"is '{tc}'; current availability remains unknown.")
+    return ("Retrieved website evidence — no temporal context recorded; current "
+            "availability remains unknown.")
+
+
 def _shape_row(r: Dict[str, Any]) -> Dict[str, Any]:
     ai_status = r.get("ai_enrichment_status")
     validated = ai_status == "validated_extraction"
@@ -160,10 +199,9 @@ def _shape_row(r: Dict[str, Any]) -> Dict[str, Any]:
             "retrieved_evidence_url": r.get("retrieved_evidence_url"),
             "retrieved_evidence_retrieved_at": r.get("retrieved_evidence_retrieved_at"),
             "retrieved_temporal_context": r.get("retrieved_temporal_context"),
-            "temporal_note": (
-                "Historical statement from retrieved website evidence — current availability "
-                "remains unknown; this is not a current-availability claim."
-            ),
+            # Rendered from the actual recorded temporal context — only a
+            # dated historical statement is described as historical.
+            "temporal_note": _temporal_note(r.get("retrieved_temporal_context")),
             "retrieved_branch_address_quote": r.get("retrieved_branch_address_quote"),
             "retrieved_branch_address_url": r.get("retrieved_branch_address_url"),
             "retrieved_branch_assessment": r.get("retrieved_branch_assessment"),
@@ -249,7 +287,7 @@ def _shape_row(r: Dict[str, Any]) -> Dict[str, Any]:
                 "Possible mixed-facility/branch record — evidence may refer to a different facility or branch."
                 if mixed else None
             ),
-            "evidence_quotations": _complex(r.get("ai_evidence_quotations")) or [],
+            "evidence_quotations": _quote_items(r.get("ai_evidence_quotations")),
             "validator_version": r.get("ai_validator_version"),
             "note": r.get("ai_enrichment_note") or AI_VALIDATED_NOTE,
         }
@@ -344,10 +382,18 @@ EVIDENCE_DISPLAY_CAP = 12
 # labeled specialist mentions, not proof of onsite surgery; the verified
 # "Caesarian" spelling and explicit burn-surgery phrases are included.
 ALIAS_GROUPS: List[List[str]] = [
-    # Dialysis family — reviewed mapping (dialysis + separately tagged modalities)
-    ["dialysis", "hemodialysis", "haemodialysis", "peritoneal dialysis",
-     "crrt", "continuous renal replacement therapy",
-     "hemofiltration", "haemofiltration"],
+    # Dialysis modalities — SEPARATE equivalence groups. Each group holds only
+    # true orthographic/equivalence variants of ONE modality (e.g.
+    # hemodialysis <-> haemodialysis, crrt <-> continuous renal replacement
+    # therapy). The generic "dialysis" phrase is deliberately NOT a member of
+    # any group: a modality query never broadens to other modalities or to
+    # generic dialysis text. Broad family DISCOVERY for a generic dialysis
+    # query is one-directional and handled explicitly in _expand_variants
+    # (see DIALYSIS_MODALITY_PHRASES below).
+    ["hemodialysis", "haemodialysis"],
+    ["peritoneal dialysis"],
+    ["crrt", "continuous renal replacement therapy"],
+    ["hemofiltration", "haemofiltration"],
     # Cesarean delivery — reviewed mapping + verified "Caesarian" spelling
     ["cesarean", "cesarean section", "caesarean", "caesarean section",
      "caesarian", "caesarian section", "c section", "lscs"],
@@ -375,7 +421,16 @@ ALIAS_GROUPS: List[List[str]] = [
     ["pediatric", "paediatric"],
 ]
 
-DIALYSIS_FAMILY = set(ALIAS_GROUPS[0])
+# The dialysis service family (for enrichment attachment): the generic phrase
+# plus every specific modality. Mirrors the four modality groups in
+# ALIAS_GROUPS above (a test asserts they stay in sync).
+DIALYSIS_FAMILY = {"dialysis", "hemodialysis", "haemodialysis", "peritoneal dialysis",
+                   "crrt", "continuous renal replacement therapy", "hemofiltration",
+                   "haemofiltration"}
+# Specific modality phrases — the one-directional broad-discovery targets for
+# a generic "dialysis" query (patient-scope modifiers preserved). Sorted so
+# the variant order is deterministic.
+DIALYSIS_MODALITY_PHRASES = sorted(DIALYSIS_FAMILY - {"dialysis"})
 # Modifiers that may accompany a service phrase without changing its family
 # (they stay in the match — never dropped).
 ENRICHMENT_MODIFIERS = {"pediatric", "paediatric"}
@@ -531,8 +586,22 @@ def _unresolved_reasons(r: Dict[str, Any], conflict_codes: List[str]) -> List[st
         reasons.append(
             "Possible mixed-facility/branch record — evidence may describe another branch"
         )
+    has_retrieved_evidence = bool(
+        r.get("retrieved_evidence_quote")
+        or r.get("retrieved_branch_address_quote")
+        or r.get("retrieved_evidence_url")
+    )
     if r.get("pilot_needs_attribution_review"):
-        reasons.append("Retrieved website attribution unresolved for this record")
+        # Distinguish the two situations this flag covers. The retrieved-site
+        # branch assessment wording is used ONLY when an actual retrieved page
+        # exists; a flag with no retrieved page is a record-level attribution
+        # issue and is described as such.
+        if has_retrieved_evidence:
+            reasons.append("Retrieved website attribution unresolved for this record")
+        else:
+            reasons.append("Source attribution for this record is unresolved — no retrieved "
+                "website evidence is available for it yet"
+            )
     a = r.get("ai_assertion")
     if r.get("ai_enrichment_status") == "validated_extraction" and a in (
         "ambiguous", "negated", "planned_or_historical_only", "not_mentioned"
@@ -668,37 +737,75 @@ def _last_token_forms(phrase: str) -> List[str]:
 
 
 def _expand_variants(base: str) -> List[str]:
-    """Ordered match variants: base first, then alias substitutions applied
-    at token boundaries to a fixpoint, then plain singular/plural forms.
-    Bounded by MAX_MATCH_VARIANTS. Every variant is a plain literal phrase
-    — no regex or SQL is ever generated from user input."""
-    ordered = [base]
+    """Ordered match variants for a normalized phrase — two clearly separated
+    mechanisms, both bounded by MAX_MATCH_VARIANTS:
+
+    1. Broad generic dialysis DISCOVERY (one-directional): when the phrase,
+       ignoring patient-scope modifiers (which stay in the match), is exactly
+       the generic "dialysis" token, that token additionally matches each
+       specific modality phrase. The reverse NEVER happens — a modality query
+       does not broaden to other modalities or to generic dialysis text.
+    2. Orthographic alias EQUIVALENCE (symmetric): true variants of the SAME
+       concept (hemodialysis <-> haemodialysis, crrt <-> continuous renal
+       replacement therapy) substitute for each other. Substitution is
+       single-pass from the base phrase with longest-member-first matching,
+       and generated variants are never substituted again — recursive
+       replacement artifacts such as "peritoneal peritoneal dialysis" cannot
+       occur.
+
+    Every variant is a plain literal phrase — no regex or SQL is ever
+    generated from user input."""
+    ordered: List[str] = [base]
     seen = {base}
-    for _ in range(3):
-        new = []
-        for v in list(ordered):
-            toks = v.split()
-            for group in ALIAS_GROUPS:
-                for member in group:
-                    mt = member.split()
-                    n = len(mt)
-                    for i in range(len(toks) - n + 1):
-                        if toks[i:i + n] == mt:
-                            for repl in group:
-                                if repl == member:
-                                    continue
-                                cand = " ".join(toks[:i] + repl.split() + toks[i + n:])
-                                if cand not in seen:
-                                    new.append(cand)
-                                    seen.add(cand)
-        ordered.extend(new)
-        if not new or len(ordered) >= MAX_MATCH_VARIANTS:
-            break
+
+    def _add(cand: str) -> None:
+        if cand not in seen and len(ordered) < MAX_MATCH_VARIANTS:
+            seen.add(cand)
+            ordered.append(cand)
+
+    toks = base.split()
+
+    # (1) One-directional broad generic dialysis discovery. The phrase must
+    # reduce to exactly the generic "dialysis" token (modifiers aside) — a
+    # modality phrase or any other wording never triggers discovery.
+    core = [t for t in toks if t not in ENRICHMENT_MODIFIERS]
+    if core == ["dialysis"] and "dialysis" in toks:
+        i = toks.index("dialysis")
+        for fam in DIALYSIS_MODALITY_PHRASES:
+            # Modifiers keep their position and stay attached to each
+            # modality phrase (e.g. "pediatric dialysis" ->
+            # "pediatric peritoneal dialysis").
+            _add(" ".join(toks[:i] + fam.split() + toks[i + 1:]))
+
+    # (2) Symmetric orthographic equivalence, single pass over the BASE
+    # phrase only, longest matching member at each position first — so a
+    # shorter member ("physio") never carves a longer one ("physio therapy")
+    # into composites like "physiotherapy therapy".
+    i = 0
+    while i < len(toks):
+        best_member = None
+        best_group = None
+        best_n = 0
+        for group in ALIAS_GROUPS:
+            for member in group:
+                mt = member.split()
+                n = len(mt)
+                if n > best_n and toks[i:i + n] == mt:
+                    best_member, best_group, best_n = member, group, n
+        if best_member is not None:
+            for repl in best_group:
+                if repl == best_member:
+                    continue
+                _add(" ".join(toks[:i] + repl.split() + toks[i + best_n:]))
+            i += best_n
+        else:
+            i += 1
+
+    # (3) Plain singular/plural forms of every variant (unchanged rule).
     for v in list(ordered):
         for cand in _last_token_forms(v):
-            if cand not in seen and len(ordered) < MAX_MATCH_VARIANTS:
-                ordered.append(cand)
-                seen.add(cand)
+            _add(cand)
+
     return ordered[:MAX_MATCH_VARIANTS]
 
 

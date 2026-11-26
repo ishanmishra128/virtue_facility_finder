@@ -7,34 +7,6 @@ The app never claims "best hospital", confirmed availability, or clinical suitab
 Live deployment (Databricks App — requires Databricks sign-in with access to this workspace):
 https://virtue-facility-finder-7474659425200889.aws.databricksapps.com
 
-## Screenshots
-
-Captured from the running application (search: `CRRT` + city filter `Jaipur` — 13 matching source records, live Unity Catalog data).
-
-**Home** — care search with quick-search chips, optional city/PIN filters, and the honest-caveat banners shown throughout:
-
-![Home](docs/screenshots/home.png)
-
-**Evidence-first search results** — every card shows the matched quotation, its source field, the evidence category, and the shortlist explanation:
-
-![Evidence-first search results](docs/screenshots/search-results.png)
-
-**Evidence drawer** — exact source quotations with provenance, AI-interpretation status, unverified-contact caveats, "what still needs checking", and how this result was ordered:
-
-![Evidence drawer](docs/screenshots/evidence-drawer.png)
-
-**Side-by-side comparison** — up to 3 facilities, with explicit "not recorded" placeholders:
-
-![Side-by-side comparison](docs/screenshots/comparison.png)
-
-**Interactive map** — Leaflet 1.9.4 with OpenStreetMap tiles; markers are recorded (never independently verified) coordinates for the page's records:
-
-![Interactive map](docs/screenshots/map.png)
-
-**Mobile layout:**
-
-![Mobile results](docs/screenshots/mobile-results.png)
-
 ## User-facing features
 
 - **Search:** six quick-search service buttons (dialysis, MRI, NICU, cardiac surgery, C-section, burn care) plus free-text care phrases (e.g. `cataract surgery`), with optional city and PIN-code text filters. One result per source record, with aggregated evidence.
@@ -64,7 +36,7 @@ Captured from the running application (search: `CRRT` + city filter `Jaipur` —
 
 - Provide **either** `q` (free-text care phrase) **or** `service` (legacy code, translated server-side to its canonical care phrase and run through the SAME token-boundary engine). Supplying both or neither → 400. Invalid service code → 400.
 - **One matching engine** for typed phrases and quick-search buttons: token-boundary phrase match of the normalized query (or an audited orthographic alias, e.g. `physiotherapy` / `physical therapy`) within a single evidence element — fragments are never combined across fields. Input is treated as literal text (never regex/SQL), bounded to 120 chars / 8 words. Conversational sentences ("I need the best...") → 400 with a suggestion to try a shorter care phrase. No model calls or embeddings.
-- **Alias rules (audited):** `mri`/`nicu` abbreviations require token boundaries (full-name equivalents included); cardiac surgery requires surgical context; `cardiac surgeon`-style matches are labeled `specialist_mention` — a named specialist is not proof surgery is performed onsite; verified `Caesarian` spelling variants and explicit burn-surgery phrases are included; modifiers like `pediatric` are preserved in every expanded alias.
+- **Alias rules (audited):** `mri`/`nicu` abbreviations require token boundaries (full-name equivalents included); cardiac surgery requires surgical context; `cardiac surgeon`-style matches are labeled `specialist_mention` — a named specialist is not proof surgery is performed onsite; verified `Caesarian` spelling variants and explicit burn-surgery phrases are included; modifiers like `pediatric` are preserved in every expanded alias. Modality precision (2026-11-26): **CRRT** matches only CRRT / continuous renal replacement therapy; **peritoneal dialysis**, **hemodialysis/haemodialysis**, and **hemofiltration/haemofiltration** each match only their own orthographic variants — a modality query never broadens to other modalities or to generic dialysis text. Only the generic **dialysis** query (the quick-search button) broadly discovers the whole dialysis family, one-directionally, with modifiers preserved. Alias substitution is single-pass from the base phrase, so composite artifacts like "peritoneal peritoneal dialysis" cannot occur.
 - **Ordering:** `evidence` (default — documented shortlist policy over the full result set before pagination), `name`, or `distance` (requires an origin). Ties broken deterministically.
 - **Dialysis AI interpretation and Jaipur pilot evidence** attach only when the interpreted query maps unambiguously to the dialysis service family; other free-text results carry explicit `null` enrichment and a stated limitation.
 - **Response:** `{total_count, page, page_size, query: {interpreted, aliases_used, ...}, ordering: {rules, first_result_explanation, exclusions?}, results: [...]}`. Each result: `record_id`, `facility_name`, `location {city, state, pincode, latitude, longitude, coordinate_status}`, `sql_evidence {items[{source_field, evidence_text, matched_terms}], count, matched_terms}`, `ordering {category_label, category_detail, distance_km?, unresolved_reasons}`, `ai_enrichment_status`, `ai_interpretation{...} | null`, `jaipur_pilot_supplement{...} | null`, `contacts {phones, websites, note, branch_warning}` — contacts are copied from source data and always labeled unverified.
@@ -85,8 +57,6 @@ The Databricks Apps gateway enforces Databricks OAuth for both the page and the 
 
 The app's service principal is granted SELECT only on the narrow `vf.app` views and the `vf.gold` tables it needs — never on internal silver/search tables beyond the exposed views.
 
-A **complete export** of every table above (Parquet, row-count-verified, dated 2026-11-22) is included in [`data/`](data/README.md) so the dataset can be inspected and analyzed without workspace access. The live app still reads Unity Catalog at runtime.
-
 ## Project layout
 
 ```
@@ -106,7 +76,6 @@ virtue-facility-finder/
     leaflet.js/.css # Leaflet 1.9.4 (BSD-2-Clause), vendored
     images/         # Leaflet marker/layer icons
     selftest.html/js # served browser self-test page
-  data/            # complete Parquet export of every table the app reads (see data/README.md)
 ```
 
 ## Running and deploying
@@ -129,3 +98,57 @@ databricks apps deploy <app-name> --source-code-path <this folder>
 
 - Map library: [Leaflet 1.9.4](https://leafletjs.com) (BSD-2-Clause), vendored in `frontend/`.
 - Basemap: © OpenStreetMap contributors, tiles from `tile.openstreetmap.org` under the [ODbL licence](https://www.openstreetmap.org/copyright). No API keys; no paid services.
+
+## Evidence-rendering fixes and verification (2026-11-25, deployment `01f1e8eb43771b9ba393ab5011a2448c`)
+
+Each fix was verified before deploy with bounded tests — backend: 25/25 checks against the real gold/pilot rows for the affected records (Monilek, Soni, Deep, KKS, CKS, Vaishali, Liberty); frontend: 36/36 DOM-stub runtime checks in a real JS engine; both files parse-verified; live smoke: OAuth 302 on the page and 401 on the API for unauthenticated calls, as designed.
+
+1. **AI quotation normalization** — `ai_evidence_quotations` in the gold table is an array of plain strings; the backend repackages each into `{source_field, exact_quote}` and the frontend double-guards, so the Monilek drawer shows the real quotation (previously “(no text)”). Quotations are never fabricated or completed.
+2. **Temporal state rendered faithfully** — website badges and drawer notes derive from the actual `retrieved_temporal_context` (`undated_statement`, `dated_historical_statement`, or none). Only Vaishali Hospital (dated 2023 statement) is labeled historical; Monilek and CKS show “undated statement”.
+3. **Attribution branches split** — records flagged for attribution review *without* retrieved evidence (Soni, Deep, KKS) show “Source attribution for this record is unresolved — no retrieved website evidence is available for it yet”; only records with an actual retrieved page (e.g. CKS) carry the “Retrieved website attribution unresolved” branch assessment.
+4. **Capacity differences not overstated** — Monilek's 12-machines vs 23-stations note is labeled “Unresolved capacity difference”, passing the issue text through verbatim (the source explicitly says it is NOT automatically a contradiction).
+5. **Comparison UX** — conspicuous sticky compare tray with live selection count; the wide comparison table scrolls horizontally with a visible hint and a keyboard-focusable region (`tabindex="0"`, `role="region"`, `aria-label`); Escape closes dialogs and restores focus; the capacity row reads “No live appointment or treatment-capacity information is available.” (previously a false dataset-wide-absence claim).
+6. **Plain-language enums** — `unspecified_dialysis` → “Dialysis — type not specified in the source text”; `peritoneal_dialysis`, `CRRT` and the temporal enums are similarly labeled; raw snake_case values never reach the UI.
+7. **Deterministic excerpt selection** — cards prefer a present-tense supporting claim when one exists (Liberty shows “Provides dialysis services”, not “Dialysis wing started in 2003”); when every matching element is historical, the excerpt is labeled historical context and never claims availability.
+8. **Exact quotations with safe links** — long quotations (>300 chars) collapse behind a “Show full exact quotation” toggle (`aria-expanded`); stored excerpts ending mid-sentence are marked “reproduced exactly as recorded — nothing has been added”; source URLs render as clickable HTTP(S)-only links (`target="_blank"`, `rel="noopener noreferrer nofollow"`) — `javascript:`/`data:` schemes are never linked and nothing auto-navigates. The Leaflet/OSM map is unchanged.
+
+## Reproducibility / submission package
+
+The GitHub submission repository packages everything needed to rebuild and audit the app:
+
+```
+notebooks/         # 20 pipeline notebooks (00–17 + manual step-1 cleaning), SOURCE format, outputs stripped
+sql/app_schema.sql # DDL export: the 5 narrow vf.app views (SHOW CREATE) + DESCRIBE of the 4 base tables
+data/              # Parquet exports of the 7 app tables (row-count-verified) + provenance README
+docs/screenshots/  # real UI screenshots captured against live data
+tests/             # alias-engine regression tests (no database required)
+.env.example       # configuration template — names only, no secrets
+THIRD-PARTY-NOTICES.md
+app.py, server/, frontend/   # the app source (this folder, verbatim)
+```
+
+Honest gaps, stated here rather than papered over: notebooks `00_profile_sources` and `02_clean_facilities_silver` exported as empty placeholders (the substantive step-1 cleaning lives in `01_facilities_cleaning_step1`); there are two `04_` and two `11_` notebooks (parallel steps) and no `01_`-numbered notebook. Raw source data (original spreadsheets, volunteered facility lists) is intentionally **not** included — `data/` carries only the derived app-facing tables. The AI-enrichment and pilot-retrieval notebooks document their prompts and validation rules; re-running them requires a model provider and retrieved pages not shipped in this package, so their **validated outputs** are exported instead.
+
+## Modality-precision fix and verified count reconciliation (2026-11-26, deployment `01f1e9c29bf913a6a0981a5f2a75d3c0`)
+
+Before this fix, the dialysis family was a single symmetric alias group mixing the generic phrase with every modality, and variant expansion substituted recursively to a fixpoint — so `crrt`, `peritoneal dialysis`, `hemodialysis`, `hemofiltration`, and `dialysis` all expanded to the same 24-variant set (capped by MAX_MATCH_VARIANTS, padded with composites like "peritoneal peritoneal dialysis") and returned **identical result sets**. Fixed by splitting each modality into its own equivalence group, making broad family discovery a one-directional rule from the generic phrase only, and making substitution single-pass/longest-match-first. Verified with `tests/test_alias_engine.py` (12/12, pure logic, no DB) and a read-only reconciliation against the search index (distinct matching records):
+
+| Query | Before | After | Why the count changed |
+| --- | --- | --- | --- |
+| dialysis | 1,055 | 1,055 | broad generic discovery preserved exactly |
+| crrt | 1,055 | 61 | now only CRRT + continuous renal replacement therapy (+ plural) |
+| peritoneal dialysis | 1,055 | 108 | now only peritoneal dialysis itself |
+| hemodialysis / haemodialysis | 1,055 | 273 | now only the two spellings of that modality |
+| hemofiltration | 1,055 | 5 | now only the two spellings of that modality |
+| pediatric dialysis | 13 | 12 | one record previously reachable only via the composite "paediatric haemodialysis"; it remains findable by its own modality query |
+| physio therapy | 1,205 | 1,205 | removed composites ("physiotherapy therapy") matched nothing |
+| cesarean | 443 | 445 | +2: the old 24-variant cap had crowded out legitimate plurals ("c sections") that the clean expansion fits |
+
+## Known limitations
+
+- The evidence ordering is a documented, deterministic shortlist policy — not a clinically validated ranking; mention counts and confidence scores are never used.
+- Recorded coordinates and contacts are copied from source data, never independently verified; distances are straight-line, not travel time.
+- AI dialysis interpretation: `equipment_only` does not establish service delivery; `extraction_needs_review` rows withhold the interpretation and show the dataset quotations instead.
+- Retrieved website evidence carries a retrieval date, not a service-verification date; attribution-review flags and unresolved-issue notes pass through verbatim and are never silently resolved.
+- No live appointment or capacity information exists anywhere in the pipeline; the app never claims availability — it says so explicitly wherever the topic arises.
+- Enrichment attaches only to dialysis-family queries; all other services carry explicit nulls with a stated limitation.

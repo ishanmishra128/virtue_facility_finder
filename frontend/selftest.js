@@ -102,6 +102,13 @@
         const modal = visible(id(doc(), "compare-modal"));
         const rows = doc().querySelectorAll("#compare-modal table tr").length;
         record("Comparison table opens side by side", !!modal && rows > 5, modal ? rows + " table rows" : "modal did not open");
+        const checklist = doc().querySelector("#compare-modal .checklist");
+        record("Capacity row uses live-info wording (no false dataset claim)",
+          !!checklist && /no live appointment or treatment-capacity information is available/i.test(checklist.textContent),
+          checklist ? checklist.textContent.slice(0, 120) : "checklist not found");
+        const hint = doc().querySelector("#compare-modal .compare-scroll-hint");
+        record("Wide-table scroll affordance hint shown",
+          !!hint && /scroll sideways/i.test(hint.textContent), "");
         const closeBtn = doc().querySelector("#compare-modal [data-close]");
         if (closeBtn) closeBtn.click();
         const removeBtn = doc().querySelector("#compare-tray-items button");
@@ -150,6 +157,10 @@
       /contact facility to confirm/i.test(drawerText), drawerText.slice(0, 80));
     record("Drawer includes unverified contact labeling or its absence notice",
       /unverified|does not invent contacts/i.test(drawerText), "");
+    record("No '(no text)' placeholder quotes in drawer", !/\(no text\)/.test(drawerText),
+      /\(no text\)/.test(drawerText) ? "placeholder quote still rendered" : "");
+    record("Raw snake_case enums are not shown (temporal/modality)",
+      !/(undated_statement|dated_historical_statement|unspecified_dialysis|peritoneal_dialysis)/.test(drawerText), "");
 
     // Summary
     const summary = document.createElement("p");

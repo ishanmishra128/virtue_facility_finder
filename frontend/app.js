@@ -38,6 +38,52 @@ const SCOPE_LABELS = {
   mixed_explicit: "Patient scope: mixed (explicit)",
 };
 
+// Plain-language rendering of dataset enums (raw snake_case is never shown).
+// Verified enum sets (2026-11-25, read-only): retrieved temporal contexts are
+// exactly {dated_historical_statement, undated_statement, null}; dialysis
+// treatment types are exactly {CRRT, hemodialysis, hemofiltration,
+// peritoneal_dialysis, unspecified_dialysis}.
+const TEMPORAL_LABELS = {
+  dated_historical_statement: "dated historical statement — refers to the past, not current availability",
+  undated_statement: "undated statement — no date given, current status not established",
+};
+function temporalLabel(t) {
+  return t ? TEMPORAL_LABELS[t] || t.replace(/_/g, " ") : "temporal context not recorded";
+}
+
+const MODALITY_LABELS = {
+  crrt: "CRRT — continuous renal replacement therapy (distinct from routine dialysis)",
+  hemodialysis: "Hemodialysis",
+  haemodialysis: "Haemodialysis",
+  hemofiltration: "Hemofiltration",
+  peritoneal_dialysis: "Peritoneal dialysis",
+  unspecified_dialysis: "Dialysis — type not specified in the source text",
+};
+function modalityLabel(t) {
+  return MODALITY_LABELS[String(t).toLowerCase()] || String(t);
+}
+
+function retrievedIssueText(text) {
+  // The recorded issue text is passed through VERBATIM. A quantities/units/
+  // dates difference gets this plain-language label — per the recorded issue
+  // itself it is NOT automatically a contradiction or correction.
+  const t = String(text);
+  if (/^unresolved difference in quantities/i.test(t)) return `Unresolved capacity difference — ${t}`;
+  return t;
+}
+
+// Matching text that looks historical (a year, or founding/starting verbs).
+// Used only to CHOOSE among existing quotations and to label the fallback —
+// never to invent, complete, or rewrite any quotation.
+const HISTORICAL_TEXT_RE = /\b(19|20)\d{2}\b|\b(started|established|founded|inaugurated|began|set up)\b/i;
+function pickExcerptItem(r) {
+  const items = (r.sql_evidence && r.sql_evidence.items) || [];
+  if (!items.length) return { item: null, historical: false };
+  const plain = items.filter((it) => !HISTORICAL_TEXT_RE.test(it.evidence_text || ""));
+  if (plain.length) return { item: plain[0], historical: false };
+  return { item: items[0], historical: true };
+}
+
 // ---------------------------------------------------------------- State
 const state = {
   q: "",
@@ -471,7 +517,7 @@ function scopeChips(r) {
     chips.push(c);
     for (const t of ai.treatment_types || []) {
       const isCrrt = String(t).toLowerCase() === "crrt";
-      chips.push(h("span", { class: `chip-modality${isCrrt ? " chip-modality-crrt" : ""}` }, `${t}${isCrrt ? " — distinct from routine dialysis" : ""}`));
+      chips.push(h("span", { class: `chip-modality${isCrrt ? " chip-modality-crrt" : ""}` }, modalityLabel(t)));
     }
   }
   return chips;
@@ -484,7 +530,8 @@ function renderCard(r) {
   const ev = evidenceCategory(r);
   const badges = [h("span", { class: `badge ${ev.cls}`, title: ev.detail || undefined }, ev.label)];
   if (r.jaipur_pilot_supplement && r.jaipur_pilot_supplement.retrieved_evidence_quote) {
-    badges.push(h("span", { class: "badge badge-neutral", title: "A retrieved website statement exists — historical, not a verification of current care." }, "Website statement available"));
+    const ws = r.jaipur_pilot_supplement;
+    badges.push(h("span", { class: "badge badge-neutral", title: `A retrieved website statement exists — ${temporalLabel(ws.retrieved_temporal_context)}; not a verification of current care.` }, "Website statement available"));
   }
   if (r.ordering && r.ordering.distance_km != null) {
     badges.push(h("span", { class: "badge badge-neutral" }, `≈ ${r.ordering.distance_km} km — straight-line, recorded location`));
@@ -508,12 +555,18 @@ function renderCard(r) {
   const chips = scopeChips(r);
   if (chips.length) card.append(h("p", { class: "badge-row" }, ...chips));
   // One exact supporting excerpt + a short plain-language explanation.
-  const first = r.sql_evidence.items && r.sql_evidence.items[0];
-  if (first) {
+  // Prefer an existing substantive present-tense claim; when every matching
+  // element looks historical (a year, "started/established/founded…"), show
+  // that historical context explicitly labeled — availability is never invented.
+  const pick = pickExcerptItem(r);
+  if (pick.item) {
+    const first = pick.item;
     const src = first.source_field ? SOURCE_LABELS[first.source_field] || first.source_field : "source text";
     card.append(h("div", { class: "excerpt" },
       h("p", { class: "excerpt-text" }, `“${first.evidence_text || "(no text returned)"}”`),
-      h("p", { class: "excerpt-src muted" }, `From the facility’s ${src}`),
+      h("p", { class: "excerpt-src muted" }, pick.historical
+        ? `From the facility’s ${src} — historical context; not a claim of current availability`
+        : `From the facility’s ${src}`),
     ));
   }
   card.append(h("p", { class: "why" }, evidenceExplanation(r)));
@@ -576,8 +629,45 @@ function gotoPage(p) {
 }
 
 // ---------------------------------------------------------------- Evidence drawer
-function quoteBlock(cls, src, text) {
-  return h("div", { class: `quote-block ${cls}` }, h("span", { class: "quote-src" }, src), h("span", { class: "quote-text" }, text));
+const QUOTE_COLLAPSE_CHARS = 300;
+
+function sourceLink(url) {
+  // Clickable HTTP(S) source link only — javascript:/data: URLs are never
+  // linked, and nothing navigates except an explicit user click
+  // (target=_blank, rel=noopener). Built via safe DOM construction.
+  const u = String(url || "");
+  if (!/^https?:\/\//i.test(u)) return u || "(no URL)";
+  return h("a", { class: "source-link", href: u, target: "_blank", rel: "noopener noreferrer nofollow" }, u);
+}
+
+function quoteBlock(cls, src, text, url) {
+  // Exact quotation, expandable when long. When the stored excerpt itself
+  // ends mid-sentence, that is shown honestly — reproduced exactly as
+  // recorded, nothing added or completed.
+  const t = text == null ? "" : String(text);
+  const block = h("div", { class: `quote-block ${cls}` }, h("span", { class: "quote-src" }, src));
+  if (url) block.append(h("span", { class: "quote-src" }, "Source: ", sourceLink(url)));
+  const textEl = h("p", { class: "quote-text" }, `“${t}”`);
+  if (t.length > QUOTE_COLLAPSE_CHARS) {
+    textEl.classList.add("quote-collapsed");
+    const toggle = h("button", { class: "btn btn-ghost btn-small quote-toggle", type: "button", "aria-expanded": "false" }, "Show full exact quotation");
+    toggle.addEventListener("click", () => {
+      const collapsed = textEl.classList.toggle("quote-collapsed");
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.textContent = collapsed ? "Show full exact quotation" : "Collapse quotation";
+    });
+    block.append(textEl, toggle);
+  } else {
+    block.append(textEl);
+  }
+  const CLOSERS = "\u0022\u201D\u0027\u0029\u005D";
+  const trimmed = t.trim();
+  let end = trimmed.length - 1;
+  while (end >= 0 && CLOSERS.indexOf(trimmed[end]) >= 0) end -= 1;
+  if (t.length > 120 && !(end >= 0 && ".!?;:".indexOf(trimmed[end]) >= 0)) {
+    block.append(h("p", { class: "quote-note muted" }, "The stored excerpt ends here — reproduced exactly as recorded; nothing has been added."));
+  }
+  return block;
 }
 
 function openDrawer(r) {
@@ -596,7 +686,7 @@ function openDrawer(r) {
       o.category_detail ? ` — ${o.category_detail}` : ""),
     h("p", { class: "muted" }, evidenceExplanation(r)),
   );
-  const first = r.sql_evidence.items && r.sql_evidence.items[0];
+  const first = pickExcerptItem(r).item;
   if (first) {
     const terms = first.matched_terms && first.matched_terms.length ? ` (matched: ${first.matched_terms.join(", ")})` : "";
     why.append(quoteBlock("", `From the facility’s ${friendlyField(first.source_field)}${terms}`, first.evidence_text || "(no text returned)"));
@@ -620,19 +710,22 @@ function openDrawer(r) {
   } else {
     srcs.append(h("p", { class: "muted" }, "No dataset quotations were returned for this record."));
   }
-  if (ai && (ai.evidence_quotations || []).length) {
+  const aiQuotes = ((ai && ai.evidence_quotations) || [])
+    .map((q) => (typeof q === "string" ? { source_field: null, exact_quote: q } : q))
+    .filter((q) => q && (q.exact_quote || q.quote || q.text));
+  if (aiQuotes.length) {
     srcs.append(h("p", { class: "muted" }, "AI-extracted verbatim quotations (validated extraction — not verified care):"));
-    for (const q of ai.evidence_quotations) {
-      srcs.append(quoteBlock("", `AI quotation — ${friendlyField(q.source_field)}`, q.exact_quote || "(no text)"));
+    for (const q of aiQuotes) {
+      srcs.append(quoteBlock("", `AI quotation — ${friendlyField(q.source_field)}`, q.exact_quote || q.quote || q.text));
     }
   }
   if (r.ai_enrichment_status === "extraction_needs_review") {
     srcs.append(h("div", { class: "warning", role: "note" }, "⚠ Interpretation awaiting review — the dataset quotations above are the evidence; the AI interpretation for this record is withheld pending review."));
   }
   if (p && p.retrieved_evidence_quote) {
-    srcs.append(h("p", { class: "muted" }, "Website statement (retrieved pilot evidence — historical, not a verification of current care):"));
-    srcs.append(quoteBlock("quote-web", `${p.retrieved_evidence_url || "(no URL)"} — retrieved ${p.retrieved_evidence_retrieved_at || "unknown date"} (retrieval date, not a service-verification date)`, p.retrieved_evidence_quote));
-    if (p.retrieved_temporal_context) srcs.append(h("p", { class: "muted" }, `Statement context: ${p.retrieved_temporal_context.replace(/_/g, " ")} — not current-availability evidence.`));
+    srcs.append(h("p", { class: "muted" }, `Website statement (retrieved pilot evidence — ${temporalLabel(p.retrieved_temporal_context)}):`));
+    srcs.append(quoteBlock("quote-web", `Retrieved ${p.retrieved_evidence_retrieved_at || "unknown date"} (retrieval date, not a service-verification date)`, p.retrieved_evidence_quote, p.retrieved_evidence_url));
+    if (p.retrieved_temporal_context) srcs.append(h("p", { class: "muted" }, `Statement context: ${temporalLabel(p.retrieved_temporal_context)} — not current-availability evidence.`));
   }
   if (p && (p.unattributed_source_url_candidates || []).length) {
     srcs.append(h("p", { class: "muted" }, "Unattributed candidate links (not quoted, not verified): ", p.unattributed_source_url_candidates.join(" · ")));
@@ -648,7 +741,7 @@ function openDrawer(r) {
     if (ai.is_crrt) items.push("CRRT is listed — CRRT is not interchangeable with routine dialysis.");
     if (ai.possible_mixed_facility_record) items.push("Possible mixed-facility/branch record — evidence may refer to a different facility or branch.");
   }
-  if (p && p.retrieved_unresolved_issues) items.push(`Known conflict: ${p.retrieved_unresolved_issues}`);
+  if (p && p.retrieved_unresolved_issues) items.push(retrievedIssueText(p.retrieved_unresolved_issues));
   items.push("Recorded location is not independently verified — no directions are offered.");
   check.append(h("ul", { class: "subtle-list" }, ...items.map((t) => h("li", {}, t))));
   check.append(h("p", {}, h("strong", {}, "Current availability: contact facility to confirm.")));
@@ -656,7 +749,7 @@ function openDrawer(r) {
   if (c && ((c.phones || []).length || (c.websites || []).length)) {
     const cl = h("ul", { class: "subtle-list" });
     for (const ph of c.phones || []) cl.append(h("li", {}, `Phone (unverified): ${ph}`));
-    for (const u of c.websites || []) cl.append(h("li", {}, `Website (unverified, attribution not confirmed): ${u}`));
+    for (const u of c.websites || []) cl.append(h("li", {}, "Website (unverified, attribution not confirmed): ", sourceLink(u)));
     check.append(h("p", { class: "muted" }, "Contacts — copied from the source data and syntax-checked only; they may belong to a different branch:"), cl);
     if (c.branch_warning) check.append(h("div", { class: "warning", role: "note" }, `⚠ ${c.branch_warning}`));
   } else {
@@ -680,7 +773,7 @@ function openDrawer(r) {
   ));
   if (p) {
     if (p.retrieved_branch_address_quote) {
-      locSec.append(quoteBlock("quote-web", `Retrieved address quote — ${p.retrieved_branch_address_url || "(no URL)"}`, p.retrieved_branch_address_quote));
+      locSec.append(quoteBlock("quote-web", `Retrieved address quote`, p.retrieved_branch_address_quote, p.retrieved_branch_address_url));
       if (p.retrieved_branch_assessment) locSec.append(h("p", { class: "muted" }, `Branch assessment: ${p.retrieved_branch_assessment}`));
     }
     if (p.needs_attribution_review) locSec.append(h("div", { class: "warning", role: "note" }, "⚠ This record is flagged for attribution review — identity is not settled."));
@@ -721,8 +814,9 @@ function findRecord(id) {
 
 function refreshCompareUI() {
   const tray = $("compare-tray");
-  if (!state.compare.length) { show("compare-tray", false); return; }
+  if (!state.compare.length) { show("compare-tray", false); $("compare-tray-label").textContent = "Compare (up to 3)"; return; }
   show("compare-tray", true);
+  $("compare-tray-label").textContent = `Compare — ${state.compare.length} of up to 3 selected`;
   const items = $("compare-tray-items");
   items.innerHTML = "";
   for (const id of state.compare) {
@@ -750,15 +844,17 @@ function openCompare() {
     ["Recorded location", (r) => [r.location.city, r.location.state, r.location.pincode ? `PIN ${r.location.pincode}` : null].filter(Boolean).join(" · ") || "none"],
     ["Distance from search point", (r) => r.ordering && r.ordering.distance_km != null ? `≈ ${r.ordering.distance_km} km straight-line (recorded location)` : "Not applicable (no device location)"],
     ["Exact supporting quote", (r) => { const it = (r.sql_evidence.items || [])[0]; return it && it.evidence_text ? `“${it.evidence_text}” (from the facility’s ${it.source_field ? SOURCE_LABELS[it.source_field] || it.source_field : "source text"})` : "None returned"; }],
-    ["Patient scope", (r) => r.ai_interpretation ? `${r.ai_interpretation.patient_scope}${r.ai_interpretation.patient_scope === "unspecified" ? " (not adult eligibility)" : ""}` : "No AI interpretation"],
+    ["Patient scope", (r) => r.ai_interpretation ? `${SCOPE_LABELS[r.ai_interpretation.patient_scope] || `Patient scope: ${r.ai_interpretation.patient_scope}`}${r.ai_interpretation.patient_scope === "unspecified" ? " (not adult eligibility)" : ""}` : "No AI interpretation"],
     ["Modality", (r) => {
       const t = (r.ai_interpretation && r.ai_interpretation.treatment_types) || [];
-      return t.length ? t.join(", ") + (r.ai_interpretation && r.ai_interpretation.is_crrt ? " (CRRT is distinct from routine dialysis)" : "") : "Not extracted";
+      return t.length ? t.map(modalityLabel).join(", ") : "Not extracted";
     }],
     ["Website statement", (r) => {
       const p = r.jaipur_pilot_supplement;
       if (!p || !p.retrieved_evidence_quote) return "None";
-      return `${p.retrieved_evidence_url || "(URL missing)"} — retrieved ${p.retrieved_evidence_retrieved_at || "unknown date"}; ${p.retrieved_temporal_context || "context unknown"} (retrieval is not verification)`;
+      return h("span", {},
+        p.retrieved_evidence_url ? sourceLink(p.retrieved_evidence_url) : "(URL missing)",
+        ` — retrieved ${p.retrieved_evidence_retrieved_at || "unknown date"}; ${temporalLabel(p.retrieved_temporal_context)} (retrieval is not verification)`);
     }],
     ["Needs checking", (r) => {
       const items = ((r.ordering && r.ordering.unresolved_reasons) || []).slice();
@@ -781,18 +877,19 @@ function openCompare() {
     const tr = h("tr", {}, h("th", { scope: "row" }, label));
     for (const r of records) {
       const v = fn(r);
-      tr.append(h("td", {}, Array.isArray(v) ? h("ul", { class: "subtle-list" }, ...v.map((t) => h("li", {}, t))) : String(v)));
+      tr.append(h("td", {}, Array.isArray(v) ? h("ul", { class: "subtle-list" }, ...v.map((t) => h("li", {}, t))) : (v && v.nodeType ? v : String(v))));
     }
     tbody.append(tr);
   }
   table.append(head, tbody);
-  body.append(h("div", { class: "compare-table-wrap" }, table));
+  body.append(h("p", { class: "compare-scroll-hint", role: "note" }, "Wide table — scroll sideways (or focus the table region and use arrow keys) to compare every record. The aspect column stays pinned."));
+  body.append(h("div", { class: "compare-table-wrap", tabindex: "0", role: "region", "aria-label": "Comparison table — horizontally scrollable" }, table));
   body.append(h("h4", { style: "margin-top:18px" }, "What to confirm next"));
   const checks = [
     ["Correct branch", "Multiple records may describe one facility or its branches.", (r) => !!(r.ai_interpretation && r.ai_interpretation.possible_mixed_facility_record) || !!(r.jaipur_pilot_supplement && r.jaipur_pilot_supplement.needs_attribution_review)],
     ["Service provision", "A mention — even an explicit claim — is not verified current provision.", (r) => !(r.ai_interpretation && r.ai_interpretation.assertion === "explicit_service_claim")],
     ["Patient eligibility", "Scope may be pediatric, mixed, or unspecified; unspecified is not adult eligibility.", (r) => !(r.ai_interpretation && r.ai_interpretation.patient_scope === "mixed_explicit")],
-    ["Appointment / capacity", "No capacity data exists in the dataset.", () => true],
+    ["Appointment / capacity", "No live appointment or treatment-capacity information is available.", () => true],
     ["Contact details", "Contacts from the source data are unverified and may belong to another branch — confirm before outreach.", () => true],
   ];
   const list = h("ul", { class: "checklist" });
